@@ -28,7 +28,7 @@
 #include "ImpulseResponse/ImpulseResponse.h"
 #include "ImpulseResponse/ir_data.h"
 
-#include "delayline_2tap.h"
+#include "lite_reverb.h"
 
 
 using clevelandmusicco::Hothouse;
@@ -39,13 +39,12 @@ using daisy::Parameter;
 using daisysp::Tone;
 using daisysp::ATone;
 using daisysp::Balance;
-using daisysp::fonepole;
 
 Hothouse hw;
 
-Parameter Gain, Level, Mix, filter, delayTime, delayFdbk;
+Parameter Gain, Level, Mix, filter, parm_time, parm_freq;
 
-
+LiteReverb DSY_SDRAM_BSS reverb;
 
 
 bool rn_model_enabled = true;
@@ -72,46 +71,6 @@ int neural_model_index_shift = 0;
 // Impulse Response
 ImpulseResponse mIR;
 int   m_currentIRindex = 0;
-
-// Delay Max Definitions (Assumes 48kHz samplerate)
-#define MAX_DELAY static_cast<size_t>(48000.0f * 2.f)
-DelayLine2Tap<float, MAX_DELAY> DSY_SDRAM_BSS delayLine;
-// Delay with dotted eighth and triplett options
-struct delay
-{
-    DelayLine2Tap<float, MAX_DELAY> *del;
-    float                        currentDelay;
-    float                        delayTarget;
-    float                        feedback = 0.0;
-    float                        active = false;
-    float                        level = 1.0;      // Level multiplier of output
-    bool                         secondTapOn = false;
-
-    float Process(float in)
-    {
-        //set delay times
-        fonepole(currentDelay, delayTarget, .0002f);
-        del->SetDelay(currentDelay);
-
-        float read = del->Read();
-
-        float secondTap = 0.0;
-        if (secondTapOn) {
-            secondTap = del->ReadSecondTap();
-        }
-
-        if (active) {
-            del->Write((feedback * read) + in);
-        } else {
-            del->Write(feedback * read); // if not active, don't write any new sound to buffer
-        }
-
-        return (read + secondTap) * level;
-
-    }
-};
-
-delay             delay1;
 
 
 
@@ -165,8 +124,12 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
     float vmix = Mix.Process();
     float vlevel = Level.Process();
     float vfilter = filter.Process();
-    float vdelayTime = delayTime.Process();
-    float vdelayFdbk = delayFdbk.Process();
+    float reverb_time = parm_time.Process();
+    float reverb_freq = parm_freq.Process();
+
+    float wetl;
+    // reverb.SetFeedback(reverb_time);
+    // reverb.SetLpFreq(reverb_freq);
 
     // Mix and tone control
     // Set Filter Controls
@@ -191,20 +154,6 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
     dryMix = D * D;
 
 
-    // DELAY //
-    if (vdelayTime < 0.01) {   // if knob < 1%, set delay to inactive
-        delay1.active = false;
-    } else {
-        delay1.active = true;
-    }
-
-    // From 0 to 75% knob is 0 to 1 second, 75% to 100% knob is 1 to 2 seconds (for more control over 1 second range)
-    if (vdelayTime <= 0.75) {
-        delay1.delayTarget = 2400 + vdelayTime * 60800; // in samples 50ms to 1 second range  // Note: changing delay time with heavy reverb creates a cool modulation effect
-    } else {
-        delay1.delayTarget = 48000 + (vdelayTime - 0.75) * 192000; // 1 second to 2 second range
-    }
-    delay1.feedback = vdelayFdbk;
 
 
     // react to main-loop request
@@ -239,7 +188,7 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
         float amp_out = rn_model_enabled ? ((model.forward(&x) + x)*nnLevelAdjust) : x;
 
         // Guardrails to stop NaNs/denormals from breaking the audio thread
-        if (!isfinite(amp_out)) amp_out = 0.0f;
+        // if (!isfinite(amp_out)) amp_out = 0.0f;
 
 
 
@@ -256,8 +205,8 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
             balanced_out = bal.Process(filter_out, filter_in);
         }
 
-        delay_out = delay1.Process(balanced_out);   // Moved delay prior to IR
 
+        delay_out = reverb.Process(balanced_out);
 
         // IR
         float y;
@@ -322,14 +271,14 @@ int get_sw_3() {
 
 int main() {
     hw.Init();
-    hw.SetAudioBlockSize(256);  // Number of samples handled per callback
+    hw.SetAudioBlockSize(64);  // Number of samples handled per callback
     hw.SetAudioSampleRate(SaiHandle::Config::SampleRate::SAI_48KHZ);
     float samplerate =  hw.AudioSampleRate();
     setup_ir();
     setupWeights();
 
     // Initialize the correct model
-    modelIndex = 5;
+    modelIndex = 1;
     nnLevelAdjust = 1.0;
     indexMod = 0;
     setup_model();
@@ -344,19 +293,15 @@ int main() {
     bal.Init(samplerate);
     vfilter = 0.5;
 
-    delayLine.Init();
-    delay1.del = &delayLine;
-    delay1.delayTarget = 2400; // in samples
-    delay1.feedback = 0.0;
-    delay1.active = true;
+    reverb.Init(samplerate);
 
 
     Gain.Init(hw.knobs[Hothouse::KNOB_1], 0.1f, 2.5f, Parameter::LINEAR);
     Mix.Init(hw.knobs[Hothouse::KNOB_2], 0.0f, 1.0f, Parameter::LINEAR);
     Level.Init(hw.knobs[Hothouse::KNOB_3], 0.0f, 1.0f, Parameter::LINEAR); // lower range for quieter level
     filter.Init(hw.knobs[Hothouse::KNOB_4], 0.0f, 1.0f, Parameter::CUBE);
-    delayTime.Init(hw.knobs[Hothouse::KNOB_5], 0.0f, 1.0f, Parameter::LINEAR);
-    delayFdbk.Init(hw.knobs[Hothouse::KNOB_6], 0.0f, 1.0f, Parameter::LINEAR); 
+    parm_time.Init(hw.knobs[Hothouse::KNOB_5], 0.6f, 0.999f, Parameter::LOGARITHMIC);
+    parm_freq.Init(hw.knobs[Hothouse::KNOB_6], 500.0f, 20000.0f, Parameter::LOGARITHMIC); 
 
     led_bypass.Init(hw.seed.GetPin(Hothouse::LED_2), false);
 
@@ -385,19 +330,19 @@ int main() {
             setup_model();
         }
 
-        int d = get_sw_3();
-        if (d != delay_sw_value) {
-            if (d == 0) {
-                delay1.secondTapOn = false;
-            } else if (d == 1) {
-                delay1.secondTapOn = true;
-                delay1.del->set2ndTapFraction(0.6666667); // triplett
-            } else if (d == 2) {
-                delay1.secondTapOn = true;
-                delay1.del->set2ndTapFraction(0.75); // dotted eighth
-            }
-            delay_sw_value = d;
-        }
+        // int d = get_sw_3();
+        // if (d != delay_sw_value) {
+        //     if (d == 0) {
+        //         delay1.secondTapOn = false;
+        //     } else if (d == 1) {
+        //         delay1.secondTapOn = true;
+        //         delay1.del->set2ndTapFraction(0.6666667); // triplett
+        //     } else if (d == 2) {
+        //         delay1.secondTapOn = true;
+        //         delay1.del->set2ndTapFraction(0.75); // dotted eighth
+        //     }
+        //     delay_sw_value = d;
+        // }
 
         // Toggle effect bypass LED when footswitch is pressed
         led_bypass.Set(bypass ? 0.0f : 1.0f);
