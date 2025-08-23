@@ -35,10 +35,13 @@ using daisy::AudioHandle;
 using daisy::Led;
 using daisy::SaiHandle;
 using daisy::Parameter;
+using daisysp::Tone;
+using daisysp::ATone;
+using daisysp::Balance;
 
 Hothouse hw;
 
-Parameter Gain;
+Parameter Gain, Level, Mix, filter, delayTime, delayFdbk;
 
 
 
@@ -51,6 +54,17 @@ volatile bool g_toggle_bypass_req = false;
 // Bypass vars
 Led led_bypass;
 bool bypass = true;
+
+float dryMix, wetMix;
+
+
+float           mix_effects;
+
+float vfilter;
+Tone tone;       // Low Pass
+ATone toneHP;    // High Pass
+Balance bal;     // Balance for volume correction in filtering
+
 
 // Impulse Response
 ImpulseResponse mIR;
@@ -102,7 +116,35 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
     // hw.ProcessAllControls();
 
     float vgain = Gain.Process();
+    float vmix = Mix.Process();
+    float vlevel = Level.Process();
+    float vfilter = filter.Process();
+    // float vdelayTime = delayTime.Process();
+    // float vdelayFdbk = delayFdbk.Process();
 
+    // Mix and tone control
+    // Set Filter Controls
+    if (vfilter <= 0.5) {
+        float filter_value = (vfilter * 39800.0f) + 100.0f;
+        tone.SetFreq(filter_value);
+    } else {
+        float filter_value = (vfilter - 0.5) * 800.0f + 40.0f;
+        toneHP.SetFreq(filter_value);
+    }
+
+    // Calculate mix parameters
+    //    A cheap mostly energy constant crossfade from SignalSmith Blog
+    //    https://signalsmith-audio.co.uk/writing/2021/cheap-energy-crossfade/
+    float x2 = 1.0 - vmix;
+    float A = vmix*x2;
+    float B = A * (1.0 + 1.4186 * A);
+    float C = B + vmix;
+    float D = B + x2;
+
+    wetMix = C * C;
+    dryMix = D * D;
+
+    
     // react to main-loop request
     if (g_toggle_bypass_req) {
         g_toggle_bypass_req = false;
@@ -136,18 +178,30 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
 
         // Guardrails to stop NaNs/denormals from breaking the audio thread
         if (!isfinite(amp_out)) amp_out = 0.0f;
-        // light saturation (prevents IR from exploding on transients)
-        //amp_out = fminf(fmaxf(amp_out, -1.0f), 1.0f);
+
+
+
+        // Process Tone
+        float filter_in =  amp_out;
+        float filter_out;
+        float balanced_out;
         
+        if (vfilter <= 0.5) {
+            filter_out = tone.Process(filter_in);
+            balanced_out = bal.Process(filter_out, filter_in);
+            
+        } else {
+            filter_out = toneHP.Process(filter_in);
+            balanced_out = bal.Process(filter_out, filter_in);
+        }
+
+
+
         // IR
-        float y = ir_enabled ? mIR.Process(amp_out) : amp_out;
-        
-        // Output clamp (keep it simple; you can retune later)
-        //if (!isfinite(y)) y = 0.0f;
-        //y = fminf(fmaxf(y, -1.0f), 1.0f);
-        
-        out[0][i] = y;
-        out[1][i] = y;
+        float y = ir_enabled ? mIR.Process(balanced_out) : balanced_out;
+
+        out[0][i] = y * vlevel;
+        out[1][i] = y * vlevel;
     }
 }
 
@@ -202,7 +256,7 @@ int main() {
     hw.Init();
     hw.SetAudioBlockSize(256);  // Number of samples handled per callback
     hw.SetAudioSampleRate(SaiHandle::Config::SampleRate::SAI_48KHZ);
-
+    float samplerate =  hw.AudioSampleRate();
     setup_ir();
     setupWeights();
 
@@ -212,7 +266,23 @@ int main() {
     indexMod = 0;
     setup_model();
 
+
+    // Initialize & set params for mixers 
+    mix_effects = 0.5;
+
+
+    tone.Init(samplerate);
+    toneHP.Init(samplerate);
+    bal.Init(samplerate);
+    vfilter = 0.5;
+
+
     Gain.Init(hw.knobs[Hothouse::KNOB_1], 0.1f, 2.5f, Parameter::LINEAR);
+    Mix.Init(hw.knobs[Hothouse::KNOB_2], 0.0f, 1.0f, Parameter::LINEAR);
+    Level.Init(hw.knobs[Hothouse::KNOB_3], 0.0f, 1.0f, Parameter::LINEAR); // lower range for quieter level
+    filter.Init(hw.knobs[Hothouse::KNOB_4], 0.0f, 1.0f, Parameter::CUBE);
+    delayTime.Init(hw.knobs[Hothouse::KNOB_5], 0.0f, 1.0f, Parameter::LINEAR);
+    delayFdbk.Init(hw.knobs[Hothouse::KNOB_6], 0.0f, 1.0f, Parameter::LINEAR); 
 
     led_bypass.Init(hw.seed.GetPin(Hothouse::LED_2), false);
 
