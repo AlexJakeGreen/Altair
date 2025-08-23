@@ -67,6 +67,7 @@ Tone tone;       // Low Pass
 ATone toneHP;    // High Pass
 Balance bal;     // Balance for volume correction in filtering
 
+int neural_model_index_shift = 0;
 
 // Impulse Response
 ImpulseResponse mIR;
@@ -85,7 +86,7 @@ struct delay
     float                        active = false;
     float                        level = 1.0;      // Level multiplier of output
     bool                         secondTapOn = false;
-    
+
     float Process(float in)
     {
         //set delay times
@@ -275,14 +276,14 @@ int sw_1_value = 0;
 int get_sw_1() {
     switch (hw.GetToggleswitchPosition(Hothouse::TOGGLESWITCH_1)) {
     case Hothouse::TOGGLESWITCH_UP:
-        return 2;
+        return 2 + neural_model_index_shift;
         break;
     case Hothouse::TOGGLESWITCH_MIDDLE:
-        return 1;
+        return 1 + neural_model_index_shift;
         break;
     case Hothouse::TOGGLESWITCH_DOWN:
     default:
-        return 0;
+        return 0 + neural_model_index_shift;
         break;
     }
 }
@@ -303,6 +304,7 @@ int get_sw_2() {
     }
 }
 
+int delay_sw_value = 0;
 int get_sw_3() {
     switch (hw.GetToggleswitchPosition(Hothouse::TOGGLESWITCH_3)) {
     case Hothouse::TOGGLESWITCH_UP:
@@ -376,11 +378,25 @@ int main() {
             sw_1_value = sw1;
         }
 
-        int m = get_sw_2() + get_sw_3();
+        int m = get_sw_2();
         if (m != m_number) {
             m_number = m;
             modelIndex = m;
             setup_model();
+        }
+
+        int d = get_sw_3();
+        if (d != delay_sw_value) {
+            if (d == 0) {
+                delay1.secondTapOn = false;
+            } else if (d == 1) {
+                delay1.secondTapOn = true;
+                delay1.del->set2ndTapFraction(0.6666667); // triplett
+            } else if (d == 2) {
+                delay1.secondTapOn = true;
+                delay1.del->set2ndTapFraction(0.75); // dotted eighth
+            }
+            delay_sw_value = d;
         }
 
         // Toggle effect bypass LED when footswitch is pressed
