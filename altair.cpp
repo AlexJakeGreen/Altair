@@ -87,7 +87,7 @@ int             modelInSize;
 unsigned int    modelIndex;
 float           nnLevelAdjust;
 int             indexMod;
-
+int index_shift = 0;
 // Notes: With default settings, GRU 10 is max size currently able to run on Daisy Seed
 //        - Parameterized 1-knob GRU 10 is max, GRU 8 with effects is max
 //        - Parameterized 2-knob/3-knob at GRU 8 is max
@@ -130,6 +130,8 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
     float wetl;
     // reverb.SetFeedback(reverb_time);
     // reverb.SetLpFreq(reverb_freq);
+    reverb.SetRoomSize(reverb_time);
+    reverb.SetDecay(reverb_freq);
 
     // Mix and tone control
     // Set Filter Controls
@@ -271,7 +273,7 @@ int get_sw_3() {
 
 int main() {
     hw.Init();
-    hw.SetAudioBlockSize(64);  // Number of samples handled per callback
+    hw.SetAudioBlockSize(128);  // Number of samples handled per callback
     hw.SetAudioSampleRate(SaiHandle::Config::SampleRate::SAI_48KHZ);
     float samplerate =  hw.AudioSampleRate();
     setup_ir();
@@ -300,8 +302,8 @@ int main() {
     Mix.Init(hw.knobs[Hothouse::KNOB_2], 0.0f, 1.0f, Parameter::LINEAR);
     Level.Init(hw.knobs[Hothouse::KNOB_3], 0.0f, 1.0f, Parameter::LINEAR); // lower range for quieter level
     filter.Init(hw.knobs[Hothouse::KNOB_4], 0.0f, 1.0f, Parameter::CUBE);
-    parm_time.Init(hw.knobs[Hothouse::KNOB_5], 0.6f, 0.999f, Parameter::LOGARITHMIC);
-    parm_freq.Init(hw.knobs[Hothouse::KNOB_6], 500.0f, 20000.0f, Parameter::LOGARITHMIC); 
+    parm_time.Init(hw.knobs[Hothouse::KNOB_5], 1.0f, 1.0f, Parameter::LINEAR);
+    parm_freq.Init(hw.knobs[Hothouse::KNOB_6], 0.0f, 1.0f, Parameter::LINEAR);
 
     led_bypass.Init(hw.seed.GetPin(Hothouse::LED_2), false);
 
@@ -316,6 +318,14 @@ int main() {
             g_toggle_bypass_req = true; // signal audio thread
         }
 
+        if (hw.switches[Hothouse::FOOTSWITCH_1].RisingEdge()) {
+            if (index_shift == 0) {
+                index_shift = 3;
+            } else {
+                index_shift = 0;
+            }
+        }
+
         int sw1 = get_sw_1();
         if (sw1 != sw_1_value) {
             setup_ir();
@@ -323,7 +333,7 @@ int main() {
             sw_1_value = sw1;
         }
 
-        int m = get_sw_2();
+        int m = get_sw_2() + get_sw_3() + index_shift;
         if (m != m_number) {
             m_number = m;
             modelIndex = m;

@@ -4,7 +4,7 @@
 #include <string.h>
 
 #define MAX_DELAY_SAMPLES 48000 // 1 сек @ 48кГц
-#define NUM_DELAYS 2
+#define NUM_DELAYS 4
 #define FEEDBACK 0.7f
 #define DAMP 0.4f
 #define OUT_GAIN 0.35f
@@ -21,17 +21,21 @@ class LiteReverb {
   public:
     void Init(float sr) {
         sample_rate = sr;
-        // Дві різні довжини (≈30 мс і 45 мс)
-        float times[NUM_DELAYS] = {0.030f, 0.045f};
-        for (int i = 0; i < NUM_DELAYS; i++) {
-            delays[i].size = (int)(sr * times[i]);
-            if (delays[i].size > MAX_DELAY_SAMPLES)
-                delays[i].size = MAX_DELAY_SAMPLES;
-            delays[i].write_pos = 0;
-            delays[i].read_pos = delays[i].size / 2;
-            delays[i].filter_state = 0.0f;
-            memset(delays[i].buf, 0, sizeof(float) * delays[i].size);
+        room_size = 0.5f;
+        decay = 0.7f;
+
+        UpdateDelays();
+    }
+
+    void SetRoomSize(float rs) {
+        if (room_size != rs) {
+            room_size = rs;
+            UpdateDelays();
         }
+    }
+
+    void SetDecay(float d) {
+        decay = d;
     }
 
     float Process(float in) {
@@ -44,7 +48,7 @@ class LiteReverb {
 
             // LPF (демпфування високих частот у хвості)
             d.filter_state = (1.0f - DAMP) * y + DAMP * d.filter_state;
-            float fb = d.filter_state * FEEDBACK;
+            float fb = d.filter_state * decay;
 
             // запис (сигнал + feedback)
             d.buf[d.write_pos] = in + fb;
@@ -60,5 +64,30 @@ class LiteReverb {
 
   private:
     float sample_rate;
+    float room_size;
+    float decay;
     DelayLine delays[NUM_DELAYS];
+
+    void UpdateDelays() {
+        float min_time = 0.010f;
+        float max_time = 0.100f;
+        float base_time = min_time + room_size * (max_time - min_time);
+
+        // Дві різні довжини (≈30 мс і 45 мс)
+        float times[NUM_DELAYS] = {
+            base_time,
+            base_time * 1.3f,
+            base_time * 1.7f,
+            base_time * 2.1f
+        };
+        for (int i = 0; i < NUM_DELAYS; i++) {
+            delays[i].size = (int)(sample_rate * times[i]);
+            if (delays[i].size > MAX_DELAY_SAMPLES)
+                delays[i].size = MAX_DELAY_SAMPLES;
+            delays[i].write_pos = 0;
+            delays[i].read_pos = delays[i].size / 2;
+            delays[i].filter_state = 0.0f;
+            memset(delays[i].buf, 0, sizeof(float) * delays[i].size);
+        }
+    }
 };
