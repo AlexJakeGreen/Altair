@@ -127,9 +127,6 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
     float reverb_time = parm_time.Process();
     float reverb_freq = parm_freq.Process();
 
-    float wetl;
-    // reverb.SetFeedback(reverb_time);
-    // reverb.SetLpFreq(reverb_freq);
     reverb.SetRoomSize(reverb_time);
     reverb.SetDecay(reverb_freq);
 
@@ -273,7 +270,7 @@ int get_sw_3() {
 
 int main() {
     hw.Init();
-    hw.SetAudioBlockSize(128);  // Number of samples handled per callback
+    hw.SetAudioBlockSize(256);  // Number of samples handled per callback
     hw.SetAudioSampleRate(SaiHandle::Config::SampleRate::SAI_48KHZ);
     float samplerate =  hw.AudioSampleRate();
     setup_ir();
@@ -328,9 +325,9 @@ int main() {
 
         int sw1 = get_sw_1();
         if (sw1 != sw_1_value) {
-            setup_ir();
             m_currentIRindex = sw1;
             sw_1_value = sw1;
+            setup_ir();
         }
 
         int m = get_sw_2() + get_sw_3() + index_shift;
