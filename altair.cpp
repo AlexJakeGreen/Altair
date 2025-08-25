@@ -66,8 +66,6 @@ Tone tone;       // Low Pass
 ATone toneHP;    // High Pass
 Balance bal;     // Balance for volume correction in filtering
 
-int neural_model_index_shift = 0;
-
 // Impulse Response
 ImpulseResponse mIR;
 int   m_currentIRindex = 0;
@@ -224,14 +222,14 @@ int sw_1_value = 0;
 int get_sw_1() {
     switch (hw.GetToggleswitchPosition(Hothouse::TOGGLESWITCH_1)) {
     case Hothouse::TOGGLESWITCH_UP:
-        return 2 + neural_model_index_shift;
+        return 2;
         break;
     case Hothouse::TOGGLESWITCH_MIDDLE:
-        return 1 + neural_model_index_shift;
+        return 1;
         break;
     case Hothouse::TOGGLESWITCH_DOWN:
     default:
-        return 0 + neural_model_index_shift;
+        return 0;
         break;
     }
 }
